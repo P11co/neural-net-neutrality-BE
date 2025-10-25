@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 
 // Load environment variables
 dotenv.config();
@@ -25,9 +26,28 @@ app.get('/health', (req, res) => {
 const generateNewsScript = require('./api/generate-news-script');
 app.get('/api/generate-news-script', generateNewsScript);
 
+// Proxy to Python FastAPI server for /api/battle
+// Python server should be running on port 8080
+// Start it with: uvicorn generate:app --port 8080 --reload
+app.use('/api/battle', createProxyMiddleware({
+  target: 'http://localhost:8080',
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/battle': '/battle'
+  },
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err);
+    res.status(503).json({
+      error: 'Python FastAPI server not available',
+      message: 'Please start the Python server: uvicorn generate:app --port 8080',
+      details: err.message
+    });
+  }
+}));
+
 // FastAPI endpoints (will run separately on Python)
-// These are documented here for reference:
 // POST /api/take_test - FastAPI endpoint (see api.py)
+//   Start with: uvicorn api:app --port 8000
 
 // Error handling middleware
 app.use((err, req, res, next) => {
