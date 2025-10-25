@@ -36,6 +36,8 @@ Copy `.env.example` to `.env` and fill in your values:
 - `PORT` - Node.js server port (default: 3001)
 
 ## Deployment
+### Prompt responses:
+- uvicorn generate:app                    
 
 ### Render Configuration
 
