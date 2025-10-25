@@ -32,3 +32,6 @@ Thumbs.db
 
 # Documentation
 documentations/
+
+# venv
+.venv/
