@@ -1,0 +1,16 @@
+services:
+  # Node.js/Express Service
+  - type: web
+    name: neural-net-neutrality-api
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: INSFORGE_BASE_URL
+        sync: false
+      - key: INSFORGE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
