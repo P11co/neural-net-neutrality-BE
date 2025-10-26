@@ -45,6 +45,42 @@ app.use('/api/battle', createProxyMiddleware({
   }
 }));
 
+// Proxy to Python FastAPI server for /api/generate-podcast
+// Python server should be running on port 8081
+// Start it with: uvicorn generate_podcast:app --port 8081 --reload
+app.use('/api/generate-podcast', createProxyMiddleware({
+  target: 'http://localhost:8081',
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/generate-podcast': '/generate-podcast'
+  },
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err);
+    res.status(503).json({
+      error: 'Python FastAPI server not available',
+      message: 'Please start the Python server: uvicorn generate_podcast:app --port 8081 --reload',
+      details: err.message
+    });
+  }
+}));
+
+// Proxy to Python FastAPI server for /api/podcasts (GET episodes list)
+app.use('/api/podcasts', createProxyMiddleware({
+  target: 'http://localhost:8081',
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/podcasts': '/podcasts'
+  },
+  onError: (err, req, res) => {
+    console.error('Proxy error:', err);
+    res.status(503).json({
+      error: 'Python FastAPI server not available',
+      message: 'Please start the Python server: uvicorn generate_podcast:app --port 8081 --reload',
+      details: err.message
+    });
+  }
+}));
+
 // FastAPI endpoints (will run separately on Python)
 // POST /api/take_test - FastAPI endpoint (see api.py)
 //   Start with: uvicorn api:app --port 8000

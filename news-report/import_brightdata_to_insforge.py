@@ -67,7 +67,7 @@ def parse_brightdata_article(article, source_id):
         "url": url,
         "content": article.get("description", "").strip(),
         "summary": article.get("description", "")[:200].strip() + "..." if len(article.get("description", "")) > 200 else article.get("description", "").strip(),
-        "author": None,  # Not provided by Bright Data
+        "author": "Neutral networks",  # Not provided by Bright Data
         "published_at": datetime.now().isoformat(),  # Not provided, use current time
         "category": article.get("section_name", "general").strip(),
         "image_url": article.get("article_image", "").strip() or None

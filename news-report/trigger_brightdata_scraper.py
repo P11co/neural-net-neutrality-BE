@@ -18,14 +18,14 @@ BRIGHTDATA_API_BASE = "https://api.brightdata.com/dca"
 # News sources to scrape
 SOURCES = {
     "BBC": "https://www.bbc.com/",
-    "Reuters": "https://www.reuters.com/",
-    "Straight Arrow News": "https://www.straightarrownews.com/"
+    # "Reuters": "https://www.reuters.com/",
+    # "Straight Arrow News": "https://www.straightarrownews.com/"
 }
 
 
 def trigger_scraper(url, collector_id=COLLECTOR_ID):
     """
-    Trigger a Bright Data scraper job for a given URL
+    Trigger a Bright Data scraper job for a given URL using trigger_immediate
 
     Args:
         url: The URL to scrape
@@ -35,11 +35,11 @@ def trigger_scraper(url, collector_id=COLLECTOR_ID):
         snapshot_id: The ID of the created scraping job
     """
 
-    # API endpoint to trigger collection
-    endpoint = f"{BRIGHTDATA_API_BASE}/trigger"
+    # API endpoint to trigger immediate collection
+    endpoint = f"{BRIGHTDATA_API_BASE}/trigger_immediate"
 
-    # Request payload
-    payload = [{"url": url}]
+    # Request payload - simple URL object
+    payload = {"url": url}
 
     # Headers
     headers = {
@@ -47,14 +47,13 @@ def trigger_scraper(url, collector_id=COLLECTOR_ID):
         "Content-Type": "application/json"
     }
 
-    # Query parameters
+    # Query parameter
     params = {
-        "queue_next": 1,
         "collector": collector_id
     }
 
     try:
-        print(f"🚀 Triggering scraper for: {url}")
+        print(f"🚀 Triggering immediate scraper for: {url}")
         response = requests.post(
             endpoint,
             headers=headers,
@@ -66,14 +65,25 @@ def trigger_scraper(url, collector_id=COLLECTOR_ID):
         response.raise_for_status()
         result = response.json()
 
+        # Check for snapshot_id or response_id
         snapshot_id = result.get("snapshot_id")
-        print(f"✓ Job created with snapshot_id: {snapshot_id}")
+        response_id = result.get("response_id")
 
-        return snapshot_id
+        if snapshot_id:
+            print(f"✓ Job created with snapshot_id: {snapshot_id}")
+            return snapshot_id
+        elif response_id:
+            print(f"✓ Job created with response_id: {response_id}")
+            print(f"📖 Documentation: {result.get('how_to_use', 'N/A')}")
+            return response_id
+        else:
+            print(f"⚠️  Warning: No snapshot_id or response_id returned. Response: {result}")
+            return None
 
     except requests.exceptions.RequestException as e:
         print(f"✗ Error triggering scraper: {e}")
-        if hasattr(e.response, 'text'):
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Status code: {e.response.status_code}")
             print(f"Response: {e.response.text}")
         return None
 
