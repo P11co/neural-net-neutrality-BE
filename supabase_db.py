@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Get connection details from environment
-DATABASE_URL = "postgresql://postgres.xzsbfdeduchwgtzbwhfp:[password]@aws-1-us-east-2.pooler.supabase.com:5432/postgres"
+DATABASE_URL = "postgresql://postgres.xzsbfdeduchwgtzbwhfp:sxhg5ay73039041371@aws-1-us-east-2.pooler.supabase.com:5432/postgres"
 
 # Track if we've already checked/initialized the database
 _db_initialized = False
@@ -38,10 +38,10 @@ def calc_prob(r1, r2): # From classic elo model.
 def update_elo(p1_elo, p2_elo, winner):
     if winner == "1":
       prob_opposite = calc_prob(p2_elo, p1_elo)
-      S_0, S_1 = 1, -1
+      S_0, S_1 = -1, 1
     else:
       prob_opposite = calc_prob(p1_elo, p2_elo)
-      S_0, S_1 = -1, 1
+      S_0, S_1 = 1, -1
     p1_new = p1_elo + 32 * S_0 * (prob_opposite)
     p2_new = p2_elo + 32 * S_1 * (prob_opposite)
     return p1_new, p2_new
@@ -208,7 +208,7 @@ def update_ratings(winner_model: str, loser_model: str, k_factor: int = 32) -> t
             INSERT INTO elo_ratings (model_name, rating, wins, updated_at)
             VALUES (%s, %s, 1, CURRENT_TIMESTAMP)
             ON CONFLICT (model_name) DO UPDATE
-            SET rating = %s, wins = wins + 1, updated_at = CURRENT_TIMESTAMP
+            SET rating = %s, wins = elo_ratings.wins + 1, updated_at = CURRENT_TIMESTAMP
         """, (winner_model, round(new_winner_rating, 2), round(new_winner_rating, 2)))
         
         # Upsert loser
@@ -216,7 +216,7 @@ def update_ratings(winner_model: str, loser_model: str, k_factor: int = 32) -> t
             INSERT INTO elo_ratings (model_name, rating, losses, updated_at)
             VALUES (%s, %s, 1, CURRENT_TIMESTAMP)
             ON CONFLICT (model_name) DO UPDATE
-            SET rating = %s, losses = losses + 1, updated_at = CURRENT_TIMESTAMP
+            SET rating = %s, losses = elo_ratings.losses + 1, updated_at = CURRENT_TIMESTAMP
         """, (loser_model, round(new_loser_rating, 2), round(new_loser_rating, 2)))
         
         conn.commit()
