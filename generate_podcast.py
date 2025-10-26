@@ -94,10 +94,10 @@ def create_news_prompt(articles):
         The complete script"""
 
 async def fetch_articles():
-    """Fetch top 5 articles from InsForge using the edge function"""
+    """Fetch top 5 articles from InsForge database"""
     print("📰 Fetching top 5 articles from InsForge...")
 
-    # Use the deployed edge function to fetch articles
+    # Fetch directly from database via REST API
     import httpx
 
     headers = {
@@ -107,15 +107,16 @@ async def fetch_articles():
 
     async with httpx.AsyncClient() as http_client:
         response = await http_client.get(
-            f"{INSFORGE_BASE_URL}/functions/v1/fetch-articles",
+            f"{INSFORGE_BASE_URL}/rest/v1/news_articles",
             headers=headers,
-            params={"limit": "5"}
+            params={
+                "select": "id,title,content,summary,url,published_at,news_sources(id,name)",
+                "order": "published_at.desc",
+                "limit": "5"
+            }
         )
         response.raise_for_status()
-        result = response.json()
-
-        # The edge function returns {success, count, articles}
-        articles = result.get("articles", [])
+        articles = response.json()
 
     print(f"✓ Found {len(articles)} articles")
     return articles
@@ -154,22 +155,14 @@ async def generate_script(articles):
     return script
 
 
-def generate_audio(script: str, output_path: Path = None) -> Path:
-    """Generate audio from script using ElevenLabs TTS"""
+def generate_audio_bytes(script: str) -> bytes:
+    """Generate audio from script using ElevenLabs TTS and return as bytes"""
     print("🎙️ Generating audio with ElevenLabs...")
 
-    if output_path is None:
-        # Create timestamp-based filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path(__file__).parent / "news-report" / "audio-data" / f"podcast_{timestamp}.mp3"
-
-    # Ensure directory exists
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Generate audio using ElevenLabs SDK
     voice_id = "UgBBYS2sOqTuMpoF3BR0"  # Professional news anchor voice
     model_id = "eleven_multilingual_v2"
 
+    # Generate audio using ElevenLabs SDK
     audio_stream = elevenlabs_client.text_to_speech.convert(
         text=script,
         voice_id=voice_id,
@@ -177,17 +170,17 @@ def generate_audio(script: str, output_path: Path = None) -> Path:
         output_format="mp3_44100_128"
     )
 
-    # Write stream to file
-    with output_path.open("wb") as f:
-        for chunk in audio_stream:
-            f.write(chunk)
+    # Collect all chunks into bytes
+    audio_bytes = b""
+    for chunk in audio_stream:
+        audio_bytes += chunk
 
-    print(f"✓ Audio saved to {output_path}")
-    return output_path
+    print(f"✓ Audio generated ({len(audio_bytes)} bytes)")
+    return audio_bytes
 
 
-async def upload_to_insforge_storage(file_path: Path) -> str:
-    """Upload audio file to InsForge Storage and return public URL"""
+async def upload_audio_to_insforge(audio_bytes: bytes) -> str:
+    """Upload audio bytes directly to InsForge Storage and return public URL"""
     print("☁️ Uploading to InsForge Storage...")
 
     # InsForge Storage bucket name
@@ -199,28 +192,30 @@ async def upload_to_insforge_storage(file_path: Path) -> str:
 
     # Upload using httpx
     import httpx
+    from io import BytesIO
 
     headers = {
         "apikey": INSFORGE_API_KEY,
         "Authorization": f"Bearer {INSFORGE_API_KEY}",
     }
 
-    with file_path.open("rb") as f:
-        files = {"file": (storage_filename, f, "audio/mpeg")}
+    # Create file-like object from bytes
+    audio_file = BytesIO(audio_bytes)
+    files = {"file": (storage_filename, audio_file, "audio/mpeg")}
 
-        async with httpx.AsyncClient(timeout=120.0) as http_client:
-            response = await http_client.post(
-                f"{INSFORGE_BASE_URL}/storage/v1/object/{bucket_name}/{storage_filename}",
-                headers=headers,
-                files=files
-            )
+    async with httpx.AsyncClient(timeout=120.0) as http_client:
+        response = await http_client.post(
+            f"{INSFORGE_BASE_URL}/api/storage/buckets/{bucket_name}/objects/{storage_filename}",
+            headers=headers,
+            files=files
+        )
 
-            if response.status_code not in [200, 201]:
-                print(f"Upload failed: {response.status_code} - {response.text}")
-                raise HTTPException(status_code=500, detail=f"Failed to upload to storage: {response.text}")
+        if response.status_code not in [200, 201]:
+            print(f"Upload failed: {response.status_code} - {response.text}")
+            raise HTTPException(status_code=500, detail=f"Failed to upload to storage: {response.text}")
 
     # Get public URL
-    public_url = f"{INSFORGE_BASE_URL}/storage/v1/object/public/{bucket_name}/{storage_filename}"
+    public_url = f"{INSFORGE_BASE_URL}/api/storage/buckets/{bucket_name}/objects/{storage_filename}"
 
     print(f"✓ Uploaded to {public_url}")
     return public_url
@@ -249,19 +244,16 @@ async def generate_podcast():
         # Step 2: Generate script
         script = await generate_script(articles)
 
-        # Step 3: Generate audio
-        audio_file = generate_audio(script)
+        # Step 3: Generate audio (directly to bytes, no local file)
+        audio_bytes = generate_audio_bytes(script)
 
-        # Step 4: Upload to InsForge Storage
-        audio_url = await upload_to_insforge_storage(audio_file)
+        # Step 4: Upload to InsForge Storage (stream directly from memory)
+        audio_url = await upload_audio_to_insforge(audio_bytes)
 
-        # Step 5: Get audio duration (rough estimate from file size)
+        # Step 5: Get audio duration (rough estimate from size)
         # More accurate duration would require audio analysis library
-        file_size_mb = audio_file.stat().st_size / (1024 * 1024)
-        estimated_duration_seconds = int(file_size_mb * 60)  # Rough estimate: 1MB ≈ 1 minute
-
-        # Clean up local file (optional - keep for backup)
-        # audio_file.unlink()
+        audio_size_mb = len(audio_bytes) / (1024 * 1024)
+        estimated_duration_seconds = int(audio_size_mb * 60)  # Rough estimate: 1MB ≈ 1 minute
 
         # Step 6: Save to database
         articles_formatted = [
@@ -360,28 +352,96 @@ async def save_episode_to_database(audio_url: str, script: str, articles: list, 
 
 @app.get("/podcasts")
 async def get_podcasts(limit: int = 10):
-    """Get list of podcast episodes"""
+    """Get list of podcast episodes from InsForge storage bucket"""
     import httpx
+    import re
+    from datetime import datetime
 
+    print("📡 Fetching podcast episodes from InsForge storage...")
+
+    # Fetch files from storage bucket
     headers = {
         "apikey": INSFORGE_API_KEY,
         "Authorization": f"Bearer {INSFORGE_API_KEY}"
     }
 
-    async with httpx.AsyncClient() as http_client:
-        response = await http_client.get(
-            f"{INSFORGE_BASE_URL}/rest/v1/podcast_episodes",
-            headers=headers,
-            params={
-                "select": "id,title,description,publication_date,audio_url,duration_seconds,cover_image_url,play_count",
-                "order": "publication_date.desc",
-                "limit": limit
-            }
-        )
-        response.raise_for_status()
-        episodes = response.json()
+    bucket_name = "podcast-episodes"
 
-    return {"episodes": episodes, "count": len(episodes)}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            # List all files in the bucket
+            response = await http_client.get(
+                f"{INSFORGE_BASE_URL}/api/storage/buckets/{bucket_name}/objects",
+                headers=headers
+            )
+
+            if response.status_code != 200:
+                print(f"Storage fetch failed: {response.status_code} - {response.text}")
+                return {"episodes": [], "count": 0}
+
+            result = response.json()
+            files = result.get("data", [])
+            print(f"✓ Found {len(files)} files in storage")
+
+            # Convert storage files to episode format
+            episodes = []
+            for file in files:
+                file_name = file.get("key", "")
+
+                # Skip non-mp3 files
+                if not file_name.endswith(".mp3"):
+                    continue
+
+                # Parse date from filename (format: YYYY-MM-DD or YYYYMMDD)
+                date_match = re.search(r'(\d{4})-?(\d{2})-?(\d{2})', file_name)
+                if date_match:
+                    year, month, day = date_match.groups()
+                    publication_date = f"{year}-{month}-{day}"
+                    formatted_date = datetime.strptime(publication_date, "%Y-%m-%d")
+                else:
+                    # Fallback to file upload date
+                    uploaded_at = file.get("uploaded_at", "") or file.get("uploadedAt", "")
+                    if uploaded_at:
+                        formatted_date = datetime.fromisoformat(uploaded_at.replace('Z', '+00:00'))
+                        publication_date = formatted_date.strftime("%Y-%m-%d")
+                    else:
+                        publication_date = datetime.now().strftime("%Y-%m-%d")
+                        formatted_date = datetime.now()
+
+                # Generate episode metadata
+                episode_title = f"Daily Brief - {formatted_date.strftime('%B %d, %Y')}"
+
+                # Use the URL from response or construct it
+                audio_url = file.get("url") or f"{INSFORGE_BASE_URL}/api/storage/buckets/{bucket_name}/objects/{file_name}"
+
+                # Get duration from file size (rough: 1MB ≈ 1 minute at 128kbps)
+                file_size = file.get("size", 0)
+                estimated_duration = int(file_size / (1024 * 1024) * 60) if file_size else 0
+
+                episode = {
+                    "id": file.get("id", file_name),  # Use file ID or name as episode ID
+                    "title": episode_title,
+                    "description": "Your daily AI-generated neutral news podcast covering the latest in AI and politics",
+                    "publication_date": publication_date,
+                    "audio_url": audio_url,
+                    "duration_seconds": estimated_duration,
+                    "cover_image_url": "https://images.unsplash.com/photo-1478737270239-2f02b77fc618?w=800",
+                    "play_count": 0
+                }
+                episodes.append(episode)
+
+            # Sort by date (newest first)
+            episodes.sort(key=lambda x: x["publication_date"], reverse=True)
+
+            # Apply limit
+            episodes = episodes[:limit]
+
+            print(f"✓ Returning {len(episodes)} episodes")
+            return {"episodes": episodes, "count": len(episodes)}
+
+    except Exception as e:
+        print(f"❌ Error fetching episodes: {e}")
+        return {"episodes": [], "count": 0}
 
 
 @app.get("/podcasts/latest")
